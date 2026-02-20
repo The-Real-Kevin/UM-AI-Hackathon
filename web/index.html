@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WeekPilot - AI Calendar Planner</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="ambient-shape shape-one"></div>
+    <div class="ambient-shape shape-two"></div>
+
+    <div class="app-shell">
+      <aside class="panel left-panel">
+        <div class="brand-block">
+          <p class="eyebrow">UM AI Hackathon</p>
+          <h1>WeekPilot</h1>
+          <p class="subtext">Google Calendar + AI Weekly Planner</p>
+        </div>
+
+        <section class="card auth-card">
+          <h2>Google Account</h2>
+          <p id="auth-status">Checking login status...</p>
+          <div class="auth-actions">
+            <button id="login-btn" class="btn-primary">Login with Google</button>
+            <button id="logout-btn" class="btn-ghost">Logout</button>
+          </div>
+        </section>
+
+        <section class="card todo-card">
+          <h2>To-Do List</h2>
+          <form id="todo-form" class="stack-form">
+            <input id="todo-input" type="text" placeholder="Add a task..." maxlength="120" required />
+            <button type="submit" class="btn-primary">Add To-Do</button>
+          </form>
+          <ul id="todo-list" class="todo-list"></ul>
+        </section>
+
+        <section class="card event-card-form">
+          <h2>Add Event</h2>
+          <form id="event-form" class="stack-form">
+            <input id="event-title" type="text" placeholder="Event title" maxlength="120" required />
+            <div class="inline-fields">
+              <input id="event-date" type="date" required />
+              <input id="event-location" type="text" placeholder="Location" maxlength="80" />
+            </div>
+            <div class="inline-fields">
+              <input id="event-start" type="time" required />
+              <input id="event-end" type="time" required />
+            </div>
+            <textarea id="event-description" rows="3" placeholder="Description (optional)"></textarea>
+            <button type="submit" class="btn-primary">Create Event</button>
+          </form>
+        </section>
+      </aside>
+
+      <main class="panel center-panel">
+        <header class="week-header">
+          <div>
+            <p class="eyebrow">Weekly Board</p>
+            <h2>Monday to Friday</h2>
+            <p id="week-range" class="subtext"></p>
+          </div>
+          <div class="week-nav">
+            <button id="prev-week" class="btn-ghost">Previous</button>
+            <button id="this-week" class="btn-primary">This Week</button>
+            <button id="next-week" class="btn-ghost">Next</button>
+          </div>
+        </header>
+
+        <section id="calendar-grid" class="calendar-grid"></section>
+      </main>
+
+      <aside class="panel right-panel">
+        <div class="chat-header">
+          <p class="eyebrow">AI Agent</p>
+          <h2>Schedule Coach</h2>
+          <p class="subtext">Ask for recommendations or edit plans.</p>
+        </div>
+
+        <div class="quick-prompts">
+          <button class="quick-btn" data-prompt="Analyze this week's schedule, identify overload periods, and suggest improvements.">
+            Analyze overload
+          </button>
+          <button class="quick-btn" data-prompt="Find at least three 2-hour deep-work blocks this week.">
+            Find deep-work blocks
+          </button>
+          <button class="quick-btn" data-prompt="Suggest new events so I can work out 3 times this week.">
+            Add workout plan
+          </button>
+        </div>
+
+        <div id="chat-messages" class="chat-messages"></div>
+
+        <form id="chat-form" class="chat-form">
+          <textarea
+            id="chat-input"
+            rows="3"
+            placeholder="Example: Suggest how to move a Tuesday 2 PM meeting to Thursday morning."
+            required
+          ></textarea>
+          <button type="submit" class="btn-primary">Send</button>
+        </form>
+      </aside>
+    </div>
+
+    <div id="toast" class="toast" aria-live="polite"></div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
