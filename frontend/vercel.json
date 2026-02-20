@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://um-hackathon-r23p.onrender.com/api/:path*"
+    },
+    {
+      "source": "/auth/:path*",
+      "destination": "https://um-hackathon-r23p.onrender.com/auth/:path*"
+    },
+    {
+      "source": "/oauth2callback",
+      "destination": "https://um-hackathon-r23p.onrender.com/oauth2callback"
+    }
+  ]
+}

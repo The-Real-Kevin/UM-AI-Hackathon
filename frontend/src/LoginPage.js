@@ -24,9 +24,9 @@ export default function LoginPage() {
   }, [navigate]);
 
   const handleLogin = () => {
-    // redirect directly to backend host so dev-server doesn't intercept
-    const backend = process.env.REACT_APP_BACKEND_URL || 'http://localhost:4000';
-    window.location.href = `${backend}/auth/login`;
+    const backend = String(process.env.REACT_APP_BACKEND_URL || '').trim().replace(/\/$/, '');
+    // In production, default to same-origin `/auth/login` (works with Vercel rewrites).
+    window.location.href = backend ? `${backend}/auth/login` : '/auth/login';
   };
 
   if (checking) {
