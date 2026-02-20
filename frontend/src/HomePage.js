@@ -30,12 +30,60 @@ function fmtDateRange(start, end) {
   return `${fmtTime(start)} - ${fmtTime(end)}`;
 }
 
+function fmtShortDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function fmtDateTimeRange(start, end) {
+  const startDate = fmtShortDate(start);
+  const endDate = fmtShortDate(end);
+  const startTime = fmtTime(start);
+  const endTime = fmtTime(end);
+
+  if (!startDate && !endDate) return fmtDateRange(start, end);
+  if (startDate && endDate && startDate !== endDate) {
+    return `${startDate} ${startTime} - ${endDate} ${endTime}`;
+  }
+  return `${startDate || endDate} . ${startTime} - ${endTime}`;
+}
+
+function fmtDuration(event) {
+  if (typeof event?.durationDays === 'number' && event.durationDays > 0) {
+    return `${event.durationDays} day${event.durationDays > 1 ? 's' : ''}`;
+  }
+  const minutes = typeof event?.durationMinutes === 'number' ? event.durationMinutes : null;
+  if (!minutes || minutes <= 0) return '';
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
+}
+
 function getEventPosition(event) {
   if (!event.start || event.allDay) return null;
   const startDate = new Date(event.start);
-  const top = (startDate.getHours() + startDate.getMinutes() / 60) * HOUR_HEIGHT;
-  const endDate = event.end ? new Date(event.end) : new Date(startDate.getTime() + 3600000);
-  const durationHrs = (endDate - startDate) / 3600000;
+  if (Number.isNaN(startDate.getTime())) return null;
+
+  const rawEnd = event.end ? new Date(event.end) : new Date(startDate.getTime() + 3600000);
+  const endDate =
+    Number.isNaN(rawEnd.getTime()) || rawEnd <= startDate
+      ? new Date(startDate.getTime() + 3600000)
+      : rawEnd;
+
+  const startMinutesOfDay = startDate.getHours() * 60 + startDate.getMinutes();
+  const remainingMinutesOfDay = Math.max(1, 24 * 60 - startMinutesOfDay);
+  const rawDurationMinutes = Math.max(1, Math.round((endDate - startDate) / 60000));
+  const clippedDurationMinutes = Math.min(rawDurationMinutes, remainingMinutesOfDay);
+  const durationHrs = clippedDurationMinutes / 60;
+  const top = (startMinutesOfDay / 60) * HOUR_HEIGHT;
   const height = Math.max(durationHrs * HOUR_HEIGHT, 22);
   return { top, height };
 }
@@ -59,12 +107,33 @@ function formatWeekLabel(days) {
   })}`;
 }
 
+function fmtDateKeyLabel(dateKey) {
+  if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return dateKey || '';
+  const parsed = new Date(`${dateKey}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return dateKey;
+  return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function fmtImportanceLabel(importance) {
+  const lower = String(importance || 'medium').toLowerCase();
+  if (lower === 'high') return 'High';
+  if (lower === 'low') return 'Low';
+  return 'Medium';
+}
+
 export default function HomePage() {
   const [profile, setProfile] = useState(null);
   const [weekData, setWeekData] = useState(null);
   const [events, setEvents] = useState([]);
   const [weekOffset, setWeekOffset] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [topTasks, setTopTasks] = useState([]);
+  const [topTaskSummary, setTopTaskSummary] = useState('');
+  const [topTasksLoading, setTopTasksLoading] = useState(true);
+  const [topTasksError, setTopTasksError] = useState('');
+  const [topTasksEmptyWeek, setTopTasksEmptyWeek] = useState(false);
+  const [topTasksDateKey, setTopTasksDateKey] = useState('');
+  const [topTasksScope, setTopTasksScope] = useState('today');
 
   const [chatMessages, setChatMessages] = useState([
     {
@@ -74,6 +143,7 @@ export default function HomePage() {
   ]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
+  const [applyingChangeKey, setApplyingChangeKey] = useState('');
 
   const [tooltip, setTooltip] = useState(null);
 
@@ -105,9 +175,37 @@ export default function HomePage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const fetchTopTasks = useCallback((offset, scope) => {
+    setTopTasksLoading(true);
+    setTopTasksError('');
+    const topScope = scope === 'week' ? 'week' : 'today';
+    axios
+      .get(`/api/ai/top-tasks?weekOffset=${offset}&scope=${encodeURIComponent(topScope)}`)
+      .then((res) => {
+        const payload = res.data || {};
+        setTopTasks(Array.isArray(payload.topTasks) ? payload.topTasks : []);
+        setTopTaskSummary(String(payload.summary || '').trim());
+        setTopTasksEmptyWeek(Boolean(payload.emptyWeek));
+        setTopTasksDateKey(String(payload.todayDateKey || '').trim());
+      })
+      .catch((err) => {
+        const details =
+          err?.response?.data?.details ||
+          err?.response?.data?.error ||
+          err?.message ||
+          'Failed to load Top 3 tasks.';
+        setTopTasks([]);
+        setTopTaskSummary('');
+        setTopTasksEmptyWeek(false);
+        setTopTasksError(details);
+      })
+      .finally(() => setTopTasksLoading(false));
+  }, []);
+
   useEffect(() => {
     fetchWeek(weekOffset);
-  }, [weekOffset, fetchWeek]);
+    fetchTopTasks(weekOffset, topTasksScope);
+  }, [weekOffset, topTasksScope, fetchWeek, fetchTopTasks]);
 
   const handleChatSend = async () => {
     const msg = chatInput.trim();
@@ -123,7 +221,12 @@ export default function HomePage() {
       if (ai) {
         setChatMessages((prev) => [
           ...prev,
-          { role: 'ai', text: ai.reply, suggestedEvents: ai.suggestedEvents },
+          {
+            role: 'ai',
+            text: ai.reply,
+            suggestedEvents: ai.suggestedEvents,
+            proposedChanges: ai.proposedChanges,
+          },
         ]);
       }
     } catch (err) {
@@ -151,15 +254,72 @@ export default function HomePage() {
         location: suggested.location,
       });
       fetchWeek(weekOffset);
+      fetchTopTasks(weekOffset, topTasksScope);
+      const when = fmtDateTimeRange(suggested.start, suggested.end);
       setChatMessages((prev) => [
         ...prev,
-        { role: 'ai', text: `OK. "${suggested.title}" has been added to your calendar.` },
+        { role: 'ai', text: `OK. "${suggested.title}" has been added to your calendar for ${when}.` },
       ]);
     } catch {
       setChatMessages((prev) => [
         ...prev,
         { role: 'ai', text: 'Failed to add event. Please try again.' },
       ]);
+    }
+  };
+
+  const handleApplyProposedChange = async (change) => {
+    if (!change?.eventId || !change?.action) return;
+    const key = `${change.action}:${change.eventId}`;
+    if (applyingChangeKey === key) return;
+
+    setApplyingChangeKey(key);
+    try {
+      if (change.action === 'delete') {
+        await axios.delete(`/api/events/${encodeURIComponent(change.eventId)}`);
+        fetchWeek(weekOffset);
+        fetchTopTasks(weekOffset, topTasksScope);
+        setChatMessages((prev) => [
+          ...prev,
+          { role: 'ai', text: `Deleted event ${change.title || `"${change.eventId}"`}.` },
+        ]);
+        return;
+      }
+
+      if (change.action === 'update') {
+        const payload = {};
+        if (change.title) payload.summary = change.title;
+        if (change.description) payload.description = change.description;
+        if (change.location) payload.location = change.location;
+        if (change.start && change.end) {
+          payload.start = change.start;
+          payload.end = change.end;
+        }
+
+        if (!Object.keys(payload).length) {
+          throw new Error('No update payload was provided by AI.');
+        }
+
+        await axios.put(`/api/events/${encodeURIComponent(change.eventId)}`, payload);
+        fetchWeek(weekOffset);
+        fetchTopTasks(weekOffset, topTasksScope);
+        setChatMessages((prev) => [
+          ...prev,
+          { role: 'ai', text: `Updated event ${change.title || `"${change.eventId}"`}.` },
+        ]);
+      }
+    } catch (err) {
+      const details =
+        err?.response?.data?.details ||
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unknown error';
+      setChatMessages((prev) => [
+        ...prev,
+        { role: 'ai', text: `Failed to apply change. ${details}` },
+      ]);
+    } finally {
+      setApplyingChangeKey('');
     }
   };
 
@@ -171,8 +331,10 @@ export default function HomePage() {
   const days = weekData?.days || [];
   const allDayEvents = events.filter((event) => event.allDay);
   const timedEvents = events.filter((event) => !event.allDay);
+  const dayColumnCount = Math.max(days.length, 1);
+  const gridMinWidth = 52 + dayColumnCount * 100;
 
-  const tooltipLeftMax = typeof window !== 'undefined' ? window.innerWidth - 220 : 1200;
+  const tooltipLeftMax = typeof window !== 'undefined' ? window.innerWidth - 260 : 1200;
 
   return (
     <div className="planner planner-liquid">
@@ -200,6 +362,83 @@ export default function HomePage() {
       </nav>
 
       <div className="planner-main">
+        <aside className="planner-tasks-panel">
+          <div className="planner-tasks-header">
+            <div className="planner-tasks-title">
+              AI Top 3 Tasks
+              <span className="planner-ai-badge">AI</span>
+            </div>
+            <div className="planner-tasks-sub">
+              {topTasksScope === 'week'
+                ? days.length > 0
+                  ? `Week: ${formatWeekLabel(days)}`
+                  : 'This week priorities'
+                : topTasksDateKey
+                  ? `Today: ${fmtDateKeyLabel(topTasksDateKey)}`
+                  : 'Today priorities'}
+            </div>
+            <div className="planner-tasks-toggle" role="tablist" aria-label="Top tasks scope">
+              <button
+                className={`planner-tasks-toggle-btn${topTasksScope === 'today' ? ' planner-tasks-toggle-btn-active' : ''}`}
+                type="button"
+                onClick={() => setTopTasksScope('today')}
+              >
+                Today
+              </button>
+              <button
+                className={`planner-tasks-toggle-btn${topTasksScope === 'week' ? ' planner-tasks-toggle-btn-active' : ''}`}
+                type="button"
+                onClick={() => setTopTasksScope('week')}
+              >
+                This Week
+              </button>
+            </div>
+          </div>
+
+          <div className="planner-tasks-body">
+            {topTasksLoading ? (
+              <div className="planner-tasks-empty">
+                <div className="planner-spinner" />
+                <span>Analyzing calendar...</span>
+              </div>
+            ) : topTasksError ? (
+              <div className="planner-tasks-empty">{topTasksError}</div>
+            ) : topTasksEmptyWeek ? (
+              <div className="planner-tasks-empty">No events scheduled this week.</div>
+            ) : topTasks.length === 0 ? (
+              <div className="planner-tasks-empty">
+                {topTaskSummary || (topTasksScope === 'today' ? 'No events scheduled for today.' : 'No top tasks were generated.')}
+              </div>
+            ) : (
+              <>
+                {topTaskSummary && <div className="planner-tasks-summary">{topTaskSummary}</div>}
+                <div className="planner-top3-list">
+                  {topTasks.map((task, index) => {
+                    const importance = String(task?.importance || 'medium').toLowerCase();
+                    const importanceLabel = fmtImportanceLabel(importance);
+                    const dateText = task?.targetDate ? fmtDateKeyLabel(task.targetDate) : '';
+                    const timeText = String(task?.time || '').trim();
+                    const metaText = [dateText, timeText].filter(Boolean).join(' . ');
+                    return (
+                      <div key={`${task?.sourceEventId || task?.title || 'task'}-${index}`} className="planner-top3-card">
+                        <div className="planner-top3-head">
+                          <span className="planner-top3-rank">#{index + 1}</span>
+                          <span className={`planner-top3-importance planner-top3-importance-${importance}`}>
+                            {importanceLabel}
+                          </span>
+                        </div>
+                        <div className="planner-top3-title">{task?.title || `Task ${index + 1}`}</div>
+                        {metaText && <div className="planner-top3-meta">{metaText}</div>}
+                        {task?.reason && <div className="planner-top3-reason">{task.reason}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        </aside>
+
         <section className="planner-cal-panel">
           <header className="planner-cal-header">
             <span className="planner-week-label">{formatWeekLabel(days)}</span>
@@ -242,7 +481,13 @@ export default function HomePage() {
             </div>
           ) : (
             <div className="planner-grid-scroll">
-              <div className="planner-grid">
+              <div
+                className="planner-grid"
+                style={{
+                  gridTemplateColumns: `52px repeat(${dayColumnCount}, minmax(100px, 1fr))`,
+                  minWidth: `${gridMinWidth}px`,
+                }}
+              >
                 <div className="planner-grid-corner" />
 
                 {days.map((day, dayIndex) => {
@@ -329,36 +574,68 @@ export default function HomePage() {
           </div>
 
           <div className="planner-chat-messages">
-            {chatMessages.map((msg, idx) => (
-              <div key={idx}>
-                <div className={`planner-bubble ${msg.role === 'user' ? 'planner-bubble-user' : 'planner-bubble-ai'}`}>
-                  {msg.text}
-                </div>
-
-                {msg.suggestedEvents && msg.suggestedEvents.length > 0 && (
-                  <div className="planner-suggestions">
-                    {msg.suggestedEvents.map((suggested, suggestedIndex) => (
-                      <div key={suggestedIndex} className="planner-suggestion-card">
-                        <div className="planner-suggestion-title">* {suggested.title}</div>
-                        <div className="planner-suggestion-meta">
-                          {fmtTime(suggested.start)} - {fmtTime(suggested.end)}
-                          {suggested.location && ` . ${suggested.location}`}
-                        </div>
-                        {suggested.reason && (
-                          <div className="planner-suggestion-reason">{suggested.reason}</div>
-                        )}
-                        <button
-                          className="planner-add-btn"
-                          onClick={() => handleAddSuggested(suggested)}
-                        >
-                          + Add to calendar
-                        </button>
-                      </div>
-                    ))}
+            {chatMessages.map((msg, idx) => {
+              const hasProposedChanges = Array.isArray(msg.proposedChanges) && msg.proposedChanges.length > 0;
+              return (
+                <div key={idx}>
+                  <div className={`planner-bubble ${msg.role === 'user' ? 'planner-bubble-user' : 'planner-bubble-ai'}`}>
+                    {msg.text}
                   </div>
-                )}
-              </div>
-            ))}
+
+                  {!hasProposedChanges && msg.suggestedEvents && msg.suggestedEvents.length > 0 && (
+                    <div className="planner-suggestions">
+                      {msg.suggestedEvents.map((suggested, suggestedIndex) => (
+                        <div key={suggestedIndex} className="planner-suggestion-card">
+                          <div className="planner-suggestion-title">* {suggested.title}</div>
+                          <div className="planner-suggestion-meta">
+                            {fmtDateTimeRange(suggested.start, suggested.end)}
+                            {suggested.location && ` . ${suggested.location}`}
+                          </div>
+                          {suggested.reason && (
+                            <div className="planner-suggestion-reason">{suggested.reason}</div>
+                          )}
+                          <button
+                            className="planner-add-btn"
+                            onClick={() => handleAddSuggested(suggested)}
+                          >
+                            + Add to calendar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {hasProposedChanges && (
+                    <div className="planner-proposed-list">
+                      {msg.proposedChanges.map((change, changeIndex) => {
+                        const key = `${change.action}:${change.eventId}:${changeIndex}`;
+                        const applying = applyingChangeKey === `${change.action}:${change.eventId}`;
+                        const isDelete = change.action === 'delete';
+                        return (
+                          <div key={key} className="planner-proposed-card">
+                            <div className="planner-proposed-title">
+                              {isDelete ? 'Delete' : 'Update'}: {change.title || change.eventId}
+                            </div>
+                            <div className="planner-proposed-meta">
+                              {change.start && change.end ? fmtDateTimeRange(change.start, change.end) : 'Time unchanged'}
+                              {change.location ? ` . ${change.location}` : ''}
+                            </div>
+                            {change.reason && <div className="planner-proposed-reason">{change.reason}</div>}
+                            <button
+                              className={`planner-change-btn ${isDelete ? 'planner-change-btn-danger' : ''}`}
+                              onClick={() => handleApplyProposedChange(change)}
+                              disabled={applying}
+                            >
+                              {applying ? 'Applying...' : isDelete ? 'Apply delete' : 'Apply update'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
 
             {chatLoading && (
               <div className="planner-bubble planner-bubble-ai planner-bubble-loading">
@@ -399,11 +676,38 @@ export default function HomePage() {
         >
           <div className="planner-tooltip-title">{tooltip.event.summary}</div>
           <div className="planner-tooltip-body">
-            {fmtTime(tooltip.event.start)} - {fmtTime(tooltip.event.end)}
+            {fmtDateTimeRange(tooltip.event.start, tooltip.event.end)}
+            {fmtDuration(tooltip.event) && (
+              <>
+                <br />
+                Duration: {fmtDuration(tooltip.event)}
+              </>
+            )}
+            {tooltip.event.timezone && (
+              <>
+                <br />
+                Timezone: {tooltip.event.timezone}
+              </>
+            )}
             {tooltip.event.location && (
               <>
                 <br />
                 Location: {tooltip.event.location}
+              </>
+            )}
+            {tooltip.event.attachmentCount > 0 && (
+              <>
+                <br />
+                Attachments: {tooltip.event.attachmentCount}
+                {Array.isArray(tooltip.event.attachments) && tooltip.event.attachments.length > 0 && (
+                  <> ({tooltip.event.attachments.slice(0, 2).map((a) => a.title || a.mimeType || 'file').join(', ')})</>
+                )}
+              </>
+            )}
+            {tooltip.event.conferenceLink && (
+              <>
+                <br />
+                Meeting link available
               </>
             )}
             {tooltip.event.description && (
