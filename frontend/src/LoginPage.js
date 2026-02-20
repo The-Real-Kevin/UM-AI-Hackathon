@@ -24,9 +24,8 @@ export default function LoginPage() {
   }, [navigate]);
 
   const handleLogin = () => {
-    const backend = String(process.env.REACT_APP_BACKEND_URL || '').trim().replace(/\/$/, '');
-    // In production, default to same-origin `/auth/login` (works with Vercel rewrites).
-    window.location.href = backend ? `${backend}/auth/login` : '/auth/login';
+    // Always use same-origin auth path so Vercel rewrites can route to backend.
+    window.location.href = '/auth/login';
   };
 
   if (checking) {
