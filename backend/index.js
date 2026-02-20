@@ -12,7 +12,8 @@ app.use(express.json());
 const PORT = Number(process.env.PORT || 4000);
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 const CALENDAR_TIMEZONE = process.env.CALENDAR_TIMEZONE || 'Asia/Seoul';
-const STATIC_DIR = path.resolve(__dirname, '..', 'web');
+// frontend now serves UI; backend only handles APIs
+
 
 const googleConfig = {
   clientId: process.env.GOOGLE_CLIENT_ID,
@@ -390,6 +391,15 @@ app.get('/auth/login', requireGoogleConfig, (req, res) => {
   res.redirect(url);
 });
 
+// legacy callback path – some Google OAuth clients may still be configured
+// with `/oauth2callback` from earlier versions of this project.  Forward
+// requests transparently so the SPA can keep working without reconfiguring
+// the client.
+app.get('/oauth2callback', (req, res) => {
+  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  return res.redirect(`/auth/callback${qs}`);
+});
+
 app.get('/auth/callback', requireGoogleConfig, async (req, res) => {
   try {
     const { session } = getOrCreateSession(req, res);
@@ -406,7 +416,10 @@ app.get('/auth/callback', requireGoogleConfig, async (req, res) => {
     const { tokens } = await oauth.getToken(code);
     session.tokens = tokens;
     session.oauthState = null;
-    return res.redirect('/');
+    // after login send user to front‑end app
+    const frontend = process.env.FRONTEND_URL || 'http://localhost:3000';
+    return res.redirect(`${frontend}/home`);
+
   } catch (err) {
     return res.status(500).json({
       error: 'OAuth callback failed',
@@ -605,11 +618,7 @@ app.post('/api/ai/chat', requireGoogleConfig, requireAuth, async (req, res) => {
   }
 });
 
-app.use(express.static(STATIC_DIR));
 
-app.get('*', (_req, res) => {
-  res.sendFile(path.join(STATIC_DIR, 'index.html'));
-});
 
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);

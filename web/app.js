@@ -7,7 +7,7 @@ const state = {
   todos: [],
 };
 
-const TODO_STORAGE_KEY = 'weekpilot.todos.v1';
+const TODO_STORAGE_KEY = 'alignai.todos.v1';
 const aiPayloads = new Map();
 let aiPayloadSeq = 0;
 

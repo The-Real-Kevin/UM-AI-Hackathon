@@ -4,9 +4,9 @@
   --ink: #262429;
   --muted: #5f5a67;
   --line: #d9d0c0;
-  --brand: #d9672f;
-  --brand-deep: #aa4d20;
-  --accent: #14848c;
+  --brand: #ffcb05; /* maize */
+  --brand-deep: #e6b800;
+  --accent: #4d90fe; /* light blue */
   --danger: #b73737;
   --shadow: 0 18px 38px rgba(98, 81, 53, 0.12);
 }
