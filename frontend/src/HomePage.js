@@ -439,6 +439,7 @@ export default function HomePage() {
     <div className="planner planner-liquid">
       <nav className="planner-nav">
         <div className="planner-nav-brand">
+          <img src="/alignai.png" alt="AlignAI logo" className="planner-nav-logo" />
           <div className="planner-nav-dot" />
           AlignAI Calendar
         </div>

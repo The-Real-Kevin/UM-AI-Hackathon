@@ -36,8 +36,8 @@ export default function LoginPage() {
     <div className="background">
       <div className="glass-card">
         <div className="login-screen">
-          {/* simple grey square placeholder for logo */}
-          <div className="app-logo-placeholder" aria-label="AlignAI logo"></div>
+          {/* logo image */}
+          <img src="/alignai.png" alt="AlignAI logo" className="app-logo" />
           <h1 className="app-title">AlignAI Calendar</h1>
           <p className="subtitle">
             Connect your Google Calendar and let AI help organize your week!
