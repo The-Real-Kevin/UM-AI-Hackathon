@@ -10,7 +10,7 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = Number(process.env.PORT || 4000);
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const CALENDAR_TIMEZONE = process.env.CALENDAR_TIMEZONE || 'Asia/Seoul';
 // frontend now serves UI; backend only handles APIs
 
@@ -187,19 +187,13 @@ function normalizeAIResponse(raw) {
   return base;
 }
 
-function extractOutputText(responseJson) {
-  if (typeof responseJson?.output_text === 'string' && responseJson.output_text.trim()) {
-    return responseJson.output_text.trim();
-  }
-  const outputItems = Array.isArray(responseJson?.output) ? responseJson.output : [];
+function extractGroqText(responseJson) {
+  const choices = Array.isArray(responseJson?.choices) ? responseJson.choices : [];
   const chunks = [];
-  for (const item of outputItems) {
-    const content = Array.isArray(item?.content) ? item.content : [];
-    for (const chunk of content) {
-      const text = chunk?.text || chunk?.value || '';
-      if (typeof text === 'string' && text.trim()) {
-        chunks.push(text.trim());
-      }
+  for (const choice of choices) {
+    const text = choice?.message?.content || '';
+    if (typeof text === 'string' && text.trim()) {
+      chunks.push(text.trim());
     }
   }
   return chunks.join('\n').trim();
@@ -220,6 +214,17 @@ function parseJsonSafely(text) {
   } catch (_err) {
     return null;
   }
+}
+
+function isSmallTalkMessage(message) {
+  const m = String(message || '').trim().toLowerCase();
+  if (!m) return false;
+  return /^(hi|hello|hey|yo|sup|good morning|good afternoon|good evening|thanks|thank you)[!.?\s]*$/.test(m);
+}
+
+function looksLikeTemplateReply(replyText) {
+  const t = String(replyText || '').toLowerCase();
+  return t.includes('suggested events and proposed changes');
 }
 
 async function listEventsForRange(session, start, end) {
@@ -248,18 +253,21 @@ async function getUserProfile(session) {
 }
 
 async function callAIPlanner({ message, events, week }) {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!process.env.GROQ_API_KEY) {
     return {
-      reply: 'OPENAI_API_KEY is not configured. Set it in backend/.env to enable AI recommendations.',
+      reply: 'GROQ_API_KEY is not configured. Set it in backend/.env to enable AI recommendations.',
       suggestedEvents: [],
       proposedChanges: [],
     };
   }
 
   const systemPrompt = [
-    'You are an AI scheduling assistant.',
-    'Analyze existing events and suggest realistic improvements.',
-    'Respect existing commitments and avoid overlaps.',
+    'You are AlignAI, a calendar scheduling assistant.',
+    'Always answer the latest user message directly.',
+    'If the user message is greeting/chit-chat (for example: hello, hi, thanks), respond briefly and conversationally with no schedule changes.',
+    'Only suggest new events or edits if the user explicitly asks for planning, adding, moving, deleting, optimizing, or prioritizing.',
+    'Never output generic report headers or template text.',
+    'Respect existing commitments and avoid overlaps when suggesting changes.',
     'Return JSON only with this schema:',
     '{',
     '  "reply": "string",',
@@ -272,43 +280,73 @@ async function callAIPlanner({ message, events, week }) {
     '}',
     'For proposedChanges action=delete, include eventId and reason only.',
     'Keep suggestedEvents max 4 and proposedChanges max 3.',
+    'If no schedule change is requested, return empty arrays for suggestedEvents and proposedChanges.',
   ].join('\n');
 
-  const payload = {
-    timezone: CALENDAR_TIMEZONE,
-    week,
-    userMessage: message,
-    events,
-  };
-
-  const response = await fetch('https://api.openai.com/v1/responses', {
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: OPENAI_MODEL,
-      temperature: 0.35,
-      input: [
-        { role: 'system', content: [{ type: 'input_text', text: systemPrompt }] },
+      model: GROQ_MODEL,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: systemPrompt },
         {
           role: 'user',
-          content: [{ type: 'input_text', text: JSON.stringify(payload) }],
+          content: [
+            `USER_MESSAGE: ${message}`,
+            `WEEK_START: ${week.start}`,
+            `WEEK_END: ${week.end}`,
+            'EXISTING_EVENTS_JSON:',
+            JSON.stringify(events),
+          ].join('\n'),
         },
       ],
+      response_format: { type: 'json_object' },
     }),
   });
 
   if (!response.ok) {
     const details = await response.text();
-    throw new Error(`OpenAI request failed: ${response.status} ${details}`);
+    throw new Error(`Groq request failed: ${response.status} ${details}`);
   }
 
   const data = await response.json();
-  const text = extractOutputText(data);
+  const text = extractGroqText(data);
   const parsed = parseJsonSafely(text);
-  if (parsed) return normalizeAIResponse(parsed);
+  if (parsed) {
+    const normalized = normalizeAIResponse(parsed);
+    if (isSmallTalkMessage(message)) {
+      return {
+        reply: 'Hi! I can help with your calendar. Ask me to add, move, or optimize tasks for this week.',
+        suggestedEvents: [],
+        proposedChanges: [],
+      };
+    }
+    if (
+      looksLikeTemplateReply(normalized.reply) &&
+      normalized.suggestedEvents.length === 0 &&
+      normalized.proposedChanges.length === 0
+    ) {
+      return {
+        reply: 'Tell me exactly what you want to plan, and I will suggest concrete updates for this week.',
+        suggestedEvents: [],
+        proposedChanges: [],
+      };
+    }
+    return normalized;
+  }
+
+  if (isSmallTalkMessage(message)) {
+    return {
+      reply: 'Hi! I can help with your calendar. Ask me to add, move, or optimize tasks for this week.',
+      suggestedEvents: [],
+      proposedChanges: [],
+    };
+  }
 
   return {
     reply: text || 'AI returned an empty response.',
@@ -342,12 +380,21 @@ function requireAuth(req, res, next) {
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    model: OPENAI_MODEL,
+    aiProvider: 'groq',
+    model: GROQ_MODEL,
     timezone: CALENDAR_TIMEZONE,
     hasGoogleConfig: Boolean(
       googleConfig.clientId && googleConfig.clientSecret && googleConfig.redirectUri
     ),
-    hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY),
+    hasGroqKey: Boolean(process.env.GROQ_API_KEY),
+  });
+});
+
+app.get('/', (_req, res) => {
+  res.json({
+    ok: true,
+    service: 'alignai-backend',
+    health: '/api/health',
   });
 });
 
@@ -611,6 +658,7 @@ app.post('/api/ai/chat', requireGoogleConfig, requireAuth, async (req, res) => {
       ai,
     });
   } catch (err) {
+    console.error('[AI planning failed]', err);
     return res.status(500).json({
       error: 'AI planning failed',
       details: err.message,

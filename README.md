@@ -13,7 +13,7 @@ The project is now branded as **AlignAI**, an AI‑powered calendar assistant.
 - Node.js 18+
 - A Google OAuth 2.0 Client from Google Cloud Console
   - Authorized redirect URI: `http://localhost:4000/auth/callback` (the server also accepts `/oauth2callback` for compatibility)
-- OpenAI API key (for AI chat)
+- Groq API key (for AI chat)
 
 ## 2) Install and Run
 
@@ -21,7 +21,7 @@ The project is now branded as **AlignAI**, an AI‑powered calendar assistant.
 # backend (api-only)
 cd backend
 cp .env.example .env
-# Fill in .env (Google OAuth + OpenAI key)
+# Fill in .env (Google OAuth + Groq key)
 npm install
 npm start             # launches server on port 4000
 ```
