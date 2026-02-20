@@ -320,6 +320,51 @@ function normalizeTopTasksResponse(raw) {
   return out;
 }
 
+function clampUnitInterval(value, fallback = 0.7) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+
+function normalizeSmartBlocksResponse(raw) {
+  const out = {
+    summary: '',
+    smartBlocks: [],
+  };
+  if (!raw || typeof raw !== 'object') return out;
+
+  if (typeof raw.summary === 'string') {
+    out.summary = raw.summary.trim();
+  }
+
+  const source = Array.isArray(raw.smartBlocks)
+    ? raw.smartBlocks
+    : Array.isArray(raw.suggestions)
+      ? raw.suggestions
+      : [];
+  out.smartBlocks = source
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => ({
+      title: String(item.title || '').trim(),
+      start: String(item.start || '').trim(),
+      end: String(item.end || '').trim(),
+      reason: String(item.reason || '').trim(),
+      description: String(item.description || '').trim(),
+      location: String(item.location || '').trim(),
+      confidence: clampUnitInterval(item.confidence, 0.7),
+      type: String(item.type || item.category || 'focus')
+        .trim()
+        .toLowerCase(),
+      dateKey: String(item.dateKey || '').trim(),
+    }))
+    .filter((item) => item.title && item.start && item.end)
+    .slice(0, 12);
+
+  return out;
+}
+
 function normalizeTopTaskScope(scope) {
   return String(scope || '').trim().toLowerCase() === 'week' ? 'week' : 'today';
 }
@@ -356,6 +401,30 @@ function mergeTopTasks(primaryTasks, fallbackTasks, maxItems = 3) {
   return merged;
 }
 
+function mergeSmartBlocks(primaryBlocks, fallbackBlocks, maxItems = 6) {
+  const merged = [];
+  const seen = new Set();
+  const pushBlock = (block) => {
+    const title = String(block?.title || '').toLowerCase();
+    const start = String(block?.start || '');
+    const end = String(block?.end || '');
+    const sig = `${title}|${start}|${end}`;
+    if (!title || !start || !end || seen.has(sig)) return;
+    seen.add(sig);
+    merged.push(block);
+  };
+
+  for (const block of Array.isArray(primaryBlocks) ? primaryBlocks : []) {
+    pushBlock(block);
+    if (merged.length >= maxItems) return merged;
+  }
+  for (const block of Array.isArray(fallbackBlocks) ? fallbackBlocks : []) {
+    pushBlock(block);
+    if (merged.length >= maxItems) return merged;
+  }
+  return merged;
+}
+
 function buildEventDateIndex(events) {
   const index = new Map();
   for (const event of Array.isArray(events) ? events : []) {
@@ -384,6 +453,97 @@ function filterTopTasksByScope(tasks, scope, todayDateKey, eventDateIndex) {
     return false;
   });
   return filtered.slice(0, 3);
+}
+
+function intervalsOverlap(aStartMs, aEndMs, bStartMs, bEndMs) {
+  return aStartMs < bEndMs && aEndMs > bStartMs;
+}
+
+function toTimedInterval(item, timezone = AI_REFERENCE_TIMEZONE) {
+  const startRaw = String(item?.start || item?.startDateTime || '').trim();
+  const endRaw = String(item?.end || item?.endDateTime || '').trim();
+  if (!startRaw || !endRaw) return null;
+  const startDate = new Date(startRaw);
+  const endDate = new Date(endRaw);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate <= startDate) return null;
+
+  const dateKey = String(item?.dateKey || toCalendarDateKey(startDate, timezone)).trim();
+  return {
+    startDate,
+    endDate,
+    startMs: startDate.getTime(),
+    endMs: endDate.getTime(),
+    durationMinutes: Math.max(1, Math.round((endDate - startDate) / 60000)),
+    dateKey,
+  };
+}
+
+function buildWeekDateKeySet(week) {
+  return new Set(
+    (Array.isArray(week?.days) ? week.days : [])
+      .map((day) => String(day?.dateKey || '').trim())
+      .filter(Boolean)
+  );
+}
+
+function getHourInTimezone(dateObj, timezone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hour: '2-digit',
+    hour12: false,
+  }).formatToParts(dateObj);
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value || '0');
+  return Number.isFinite(hour) ? hour : 0;
+}
+
+function filterSmartBlocksByConstraints({ smartBlocks, events, week, scope, nowCtx, timezone }) {
+  const normalizedScope = normalizeTopTaskScope(scope);
+  const maxBlocks = normalizedScope === 'today' ? 3 : 6;
+  const weekDateKeys = buildWeekDateKeySet(week);
+
+  const existingIntervals = (Array.isArray(events) ? events : [])
+    .map((event) => toTimedInterval(event, timezone))
+    .filter(Boolean);
+
+  const acceptedIntervals = [];
+  const accepted = [];
+  for (const block of Array.isArray(smartBlocks) ? smartBlocks : []) {
+    const interval = toTimedInterval(block, timezone);
+    if (!interval) continue;
+    if (interval.durationMinutes < 20 || interval.durationMinutes > 180) continue;
+    if (weekDateKeys.size > 0 && !weekDateKeys.has(interval.dateKey)) continue;
+    if (normalizedScope === 'today' && interval.dateKey !== nowCtx.todayDateKey) continue;
+
+    const overlapsEvent = existingIntervals.some((busy) =>
+      intervalsOverlap(interval.startMs, interval.endMs, busy.startMs, busy.endMs)
+    );
+    if (overlapsEvent) continue;
+
+    const overlapsAccepted = acceptedIntervals.some((busy) =>
+      intervalsOverlap(interval.startMs, interval.endMs, busy.startMs, busy.endMs)
+    );
+    if (overlapsAccepted) continue;
+
+    acceptedIntervals.push(interval);
+    accepted.push({
+      title: String(block?.title || 'Focus block').trim() || 'Focus block',
+      start: interval.startDate.toISOString(),
+      end: interval.endDate.toISOString(),
+      dateKey: interval.dateKey,
+      reason: String(block?.reason || '').trim(),
+      description: String(block?.description || '').trim(),
+      location: String(block?.location || '').trim(),
+      confidence: clampUnitInterval(block?.confidence, 0.7),
+      type: String(block?.type || 'focus')
+        .trim()
+        .toLowerCase(),
+      timezone,
+    });
+
+    if (accepted.length >= maxBlocks) break;
+  }
+
+  return accepted;
 }
 
 function extractCompletionText(responseJson) {
@@ -947,6 +1107,234 @@ async function callAITopTasks({ events, week, scope }) {
   }
 }
 
+function buildFallbackSmartBlocks({ events, week, scope, nowCtx, timezone, goalHint }) {
+  const normalizedScope = normalizeTopTaskScope(scope);
+  const maxBlocks = normalizedScope === 'today' ? 3 : 6;
+  const weekDateKeys = buildWeekDateKeySet(week);
+  const trimmedGoal = String(goalHint || '').trim();
+
+  const timedEntries = (Array.isArray(events) ? events : [])
+    .filter((event) => !event?.allDay && event?.status !== 'cancelled')
+    .map((event) => {
+      const interval = toTimedInterval(event, timezone);
+      return interval ? { event, interval } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.interval.startMs - b.interval.startMs);
+
+  const scopedEntries =
+    normalizedScope === 'today'
+      ? timedEntries.filter((entry) => entry.interval.dateKey === nowCtx.todayDateKey)
+      : timedEntries;
+
+  if (scopedEntries.length === 0) {
+    return {
+      summary:
+        normalizedScope === 'today'
+          ? `No events scheduled for today (${nowCtx.todayDateKey}), so no smart blocks were generated.`
+          : `No events scheduled for this week (${String(week?.start || '').slice(0, 10)} to ${String(
+              week?.end || ''
+            ).slice(0, 10)}), so no smart blocks were generated.`,
+      smartBlocks: [],
+    };
+  }
+
+  const existingIntervals = timedEntries.map((entry) => entry.interval);
+  const acceptedIntervals = [];
+  const smartBlocks = [];
+
+  for (const entry of scopedEntries) {
+    const candidateStartMs = entry.interval.endMs + 15 * 60000;
+    const candidateEndMs = candidateStartMs + 60 * 60000;
+    const candidateStart = new Date(candidateStartMs);
+    const candidateEnd = new Date(candidateEndMs);
+    const candidateDateKey = toCalendarDateKey(candidateStart, timezone);
+    const endDateKey = toCalendarDateKey(new Date(candidateEndMs - 1), timezone);
+
+    if (candidateDateKey !== endDateKey) continue;
+    if (weekDateKeys.size > 0 && !weekDateKeys.has(candidateDateKey)) continue;
+    if (normalizedScope === 'today' && candidateDateKey !== nowCtx.todayDateKey) continue;
+
+    const startHour = getHourInTimezone(candidateStart, timezone);
+    if (startHour < 7 || startHour > 21) continue;
+
+    const overlapsEvent = existingIntervals.some((busy) =>
+      intervalsOverlap(candidateStartMs, candidateEndMs, busy.startMs, busy.endMs)
+    );
+    if (overlapsEvent) continue;
+
+    const overlapsAccepted = acceptedIntervals.some((busy) =>
+      intervalsOverlap(candidateStartMs, candidateEndMs, busy.startMs, busy.endMs)
+    );
+    if (overlapsAccepted) continue;
+
+    const sourceTitle = String(entry.event?.summary || '').trim();
+    const title = trimmedGoal
+      ? `Focus: ${trimmedGoal}`
+      : sourceTitle
+        ? `Focus block after ${sourceTitle}`
+        : 'Focus block';
+    const reason = sourceTitle
+      ? `Open focus window after "${sourceTitle}".`
+      : 'Open calendar slot suitable for focused work.';
+
+    acceptedIntervals.push({
+      startMs: candidateStartMs,
+      endMs: candidateEndMs,
+    });
+    smartBlocks.push({
+      title,
+      start: candidateStart.toISOString(),
+      end: candidateEnd.toISOString(),
+      dateKey: candidateDateKey,
+      reason,
+      description: trimmedGoal ? `Goal: ${trimmedGoal}` : '',
+      location: '',
+      confidence: 0.62,
+      type: 'focus',
+      timezone,
+    });
+
+    if (smartBlocks.length >= maxBlocks) break;
+  }
+
+  const summary =
+    smartBlocks.length > 0
+      ? `Generated ${smartBlocks.length} smart block suggestion${
+          smartBlocks.length > 1 ? 's' : ''
+        } for ${normalizedScope === 'today' ? 'today' : 'this week'}.`
+      : normalizedScope === 'today'
+        ? `No free focus windows found for today (${nowCtx.todayDateKey}).`
+        : 'No suitable free windows found this week for smart blocks.';
+
+  return {
+    summary,
+    smartBlocks,
+  };
+}
+
+async function callAISmartBlocks({ events, week, scope, goalHint }) {
+  const nowCtx = getNowContext(AI_REFERENCE_TIMEZONE);
+  const aiConfig = getAIConfig();
+  const normalizedScope = normalizeTopTaskScope(scope);
+  const weekEvents = (Array.isArray(events) ? events : []).filter((event) => event?.status !== 'cancelled');
+  const weekStart = String(week?.start || '').slice(0, 10);
+  const weekEnd = String(week?.end || '').slice(0, 10);
+
+  if (weekEvents.length === 0) {
+    return {
+      summary: `No events scheduled for this week (${weekStart} to ${weekEnd}).`,
+      smartBlocks: [],
+      emptyWeek: true,
+      scope: normalizedScope,
+      goalHint: String(goalHint || '').trim(),
+      todayDateKey: nowCtx.todayDateKey,
+      timezone: AI_REFERENCE_TIMEZONE,
+    };
+  }
+
+  const fallback = buildFallbackSmartBlocks({
+    events: weekEvents,
+    week,
+    scope: normalizedScope,
+    nowCtx,
+    timezone: AI_REFERENCE_TIMEZONE,
+    goalHint,
+  });
+
+  if (!aiConfig.apiKey) {
+    return {
+      ...fallback,
+      emptyWeek: false,
+      scope: normalizedScope,
+      goalHint: String(goalHint || '').trim(),
+      todayDateKey: nowCtx.todayDateKey,
+      timezone: AI_REFERENCE_TIMEZONE,
+    };
+  }
+
+  const scopeLabel = normalizedScope === 'week' ? `this week (${weekStart} to ${weekEnd})` : `today (${nowCtx.todayDateKey})`;
+  const safeGoal = String(goalHint || '').trim();
+  const maxBlocks = normalizedScope === 'today' ? 3 : 6;
+
+  const systemPrompt = [
+    'You are AlignAI, an assistant that proposes optional smart time blocks in a calendar.',
+    `Generate suggestions only for ${scopeLabel} in timezone ${AI_REFERENCE_TIMEZONE}.`,
+    'Prefer free windows and avoid overlaps with existing events.',
+    'Each block should be 30-90 minutes, practical, and action-oriented.',
+    'If no suitable slot exists, return an empty smartBlocks array.',
+    'Return JSON only using this schema:',
+    '{',
+    '  "summary": "string",',
+    '  "smartBlocks": [',
+    '    {"title":"string","start":"ISO-8601","end":"ISO-8601","reason":"string","description":"string","location":"string","confidence":0.0,"type":"focus|study|admin|wellness"}',
+    '  ]',
+    '}',
+    `Return at most ${maxBlocks} smart blocks.`,
+  ].join('\n');
+
+  try {
+    const text = await requestAIJsonCompletion({
+      aiConfig,
+      systemPrompt,
+      userContent: [
+        `SMART_BLOCK_SCOPE: ${normalizedScope}`,
+        `TODAY_LOCAL_DATE: ${nowCtx.todayDateKey}`,
+        `CURRENT_WEEKDAY: ${nowCtx.weekday}`,
+        `REFERENCE_TIMEZONE: ${AI_REFERENCE_TIMEZONE}`,
+        `WEEK_START: ${week?.start || ''}`,
+        `WEEK_END: ${week?.end || ''}`,
+        `GOAL_HINT: ${safeGoal || '(none)'}`,
+        'EXISTING_EVENTS_JSON:',
+        JSON.stringify(weekEvents),
+      ].join('\n'),
+      temperature: 0.25,
+    });
+
+    const parsed = parseJsonSafely(text);
+    const normalized = normalizeSmartBlocksResponse(parsed);
+    const filtered = filterSmartBlocksByConstraints({
+      smartBlocks: normalized.smartBlocks,
+      events: weekEvents,
+      week,
+      scope: normalizedScope,
+      nowCtx,
+      timezone: AI_REFERENCE_TIMEZONE,
+    });
+
+    if (filtered.length === 0) {
+      return {
+        ...fallback,
+        emptyWeek: false,
+        scope: normalizedScope,
+        goalHint: safeGoal,
+        todayDateKey: nowCtx.todayDateKey,
+        timezone: AI_REFERENCE_TIMEZONE,
+      };
+    }
+
+    const merged = mergeSmartBlocks(filtered, fallback.smartBlocks, maxBlocks);
+    return {
+      summary: normalized.summary || fallback.summary,
+      smartBlocks: merged,
+      emptyWeek: false,
+      scope: normalizedScope,
+      goalHint: safeGoal,
+      todayDateKey: nowCtx.todayDateKey,
+      timezone: AI_REFERENCE_TIMEZONE,
+    };
+  } catch (_err) {
+    return {
+      ...fallback,
+      emptyWeek: false,
+      scope: normalizedScope,
+      goalHint: safeGoal,
+      todayDateKey: nowCtx.todayDateKey,
+      timezone: AI_REFERENCE_TIMEZONE,
+    };
+  }
+}
+
 function requireGoogleConfig(_req, res, next) {
   if (!googleConfig.clientId || !googleConfig.clientSecret || !googleConfig.redirectUri) {
     return res.status(500).json({
@@ -1129,6 +1517,40 @@ app.get('/api/ai/top-tasks', requireGoogleConfig, requireAuth, async (req, res) 
   } catch (err) {
     return res.status(500).json({
       error: 'Top tasks generation failed',
+      details: err.message,
+    });
+  }
+});
+
+app.get('/api/ai/smart-blocks', requireGoogleConfig, requireAuth, async (req, res) => {
+  try {
+    const weekOffset = Number(req.query.weekOffset || 0);
+    const scope = normalizeTopTaskScope(req.query.scope || 'today');
+    const goalHint = String(req.query.goal || '').trim();
+    const week = getWeekWindow(weekOffset);
+    const events = await listEventsForRange(req.authSession, week.start, week.end);
+    const ai = await callAISmartBlocks({
+      events,
+      week: {
+        start: week.start.toISOString(),
+        end: week.end.toISOString(),
+        days: week.days,
+      },
+      scope,
+      goalHint,
+    });
+
+    return res.json({
+      ok: true,
+      weekOffset,
+      scope: ai.scope || scope,
+      goalHint: ai.goalHint || goalHint,
+      eventsCount: events.length,
+      ...ai,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      error: 'Smart blocks generation failed',
       details: err.message,
     });
   }

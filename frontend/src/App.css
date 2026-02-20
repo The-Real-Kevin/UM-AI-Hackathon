@@ -590,6 +590,210 @@ body {
   color: var(--planner-dim);
 }
 
+.planner-smart-section {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(124, 165, 209, 0.24);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.planner-smart-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.planner-smart-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--planner-text);
+}
+
+.planner-smart-section-sub {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--planner-muted);
+}
+
+.planner-smart-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.planner-smart-input {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--planner-border);
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--planner-text);
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 7px 10px;
+  outline: none;
+}
+
+.planner-smart-input:focus {
+  border-color: var(--planner-accent);
+}
+
+.planner-smart-actions-row {
+  display: flex;
+  gap: 6px;
+}
+
+.planner-smart-btn {
+  flex: 1;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid var(--planner-accent);
+  background: var(--planner-accent-soft);
+  color: var(--planner-accent);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.planner-smart-btn:hover {
+  background: var(--planner-accent);
+  color: #ffffff;
+}
+
+.planner-smart-btn-muted {
+  border-color: var(--planner-border);
+  color: var(--planner-muted);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.planner-smart-btn-muted:hover {
+  border-color: var(--planner-muted);
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--planner-text);
+}
+
+.planner-smart-goal-chip {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px dashed var(--planner-border);
+  background: rgba(255, 255, 255, 0.56);
+  color: var(--planner-muted);
+  font-size: 10px;
+}
+
+.planner-smart-empty {
+  min-height: 84px;
+  border: 1px dashed var(--planner-border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.52);
+  color: var(--planner-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  text-align: center;
+}
+
+.planner-smart-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.planner-smart-summary {
+  padding: 7px 9px;
+  border: 1px solid var(--planner-border);
+  border-radius: 7px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--planner-muted);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.planner-smart-card {
+  border: 1px solid var(--planner-border);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.planner-smart-card-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--planner-accent);
+}
+
+.planner-smart-card-meta {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--planner-muted);
+}
+
+.planner-smart-card-reason {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--planner-dim);
+}
+
+.planner-smart-card-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+.planner-smart-dismiss-btn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--planner-border);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--planner-muted);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.planner-smart-dismiss-btn:hover {
+  border-color: var(--planner-muted);
+  color: var(--planner-text);
+}
+
+.planner-smart-block-chip {
+  position: relative;
+  left: 3px;
+  right: 3px;
+  margin-right: 3px;
+  border-radius: 5px;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  cursor: pointer;
+  z-index: 4;
+  color: #275d90;
+  border: 1px dashed rgba(60, 128, 206, 0.8);
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(78, 143, 232, 0.12),
+    rgba(78, 143, 232, 0.12) 6px,
+    rgba(255, 255, 255, 0.24) 6px,
+    rgba(255, 255, 255, 0.24) 12px
+  );
+  backdrop-filter: blur(4px);
+}
+
+.planner-smart-block-chip:hover {
+  filter: brightness(1.06);
+}
+
 .planner-cal-panel {
   display: flex;
   flex-direction: column;
@@ -692,6 +896,8 @@ body {
   flex: 1;
   overflow-y: auto;
   overflow-x: auto;
+  position: relative;
+  overscroll-behavior: contain;
 }
 
 .planner-grid {
@@ -699,7 +905,7 @@ body {
   display: grid;
   grid-template-columns: 52px repeat(7, minmax(100px, 1fr));
   grid-template-rows: 36px repeat(24, var(--planner-hour-height));
-  overflow: hidden;
+  overflow: visible;
 }
 
 .planner-grid-corner {

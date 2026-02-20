@@ -121,6 +121,13 @@ function fmtImportanceLabel(importance) {
   return 'Medium';
 }
 
+function isoToDateKey(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export default function HomePage() {
   const [profile, setProfile] = useState(null);
   const [weekData, setWeekData] = useState(null);
@@ -134,6 +141,14 @@ export default function HomePage() {
   const [topTasksEmptyWeek, setTopTasksEmptyWeek] = useState(false);
   const [topTasksDateKey, setTopTasksDateKey] = useState('');
   const [topTasksScope, setTopTasksScope] = useState('today');
+  const [smartBlocks, setSmartBlocks] = useState([]);
+  const [smartBlocksSummary, setSmartBlocksSummary] = useState('');
+  const [smartBlocksLoading, setSmartBlocksLoading] = useState(true);
+  const [smartBlocksError, setSmartBlocksError] = useState('');
+  const [smartBlocksEmptyWeek, setSmartBlocksEmptyWeek] = useState(false);
+  const [smartBlockGoalInput, setSmartBlockGoalInput] = useState('');
+  const [smartBlockAppliedGoal, setSmartBlockAppliedGoal] = useState('');
+  const [applyingSmartBlockKey, setApplyingSmartBlockKey] = useState('');
 
   const [chatMessages, setChatMessages] = useState([
     {
@@ -202,10 +217,47 @@ export default function HomePage() {
       .finally(() => setTopTasksLoading(false));
   }, []);
 
+  const fetchSmartBlocks = useCallback((offset, scope, goal, rememberGoal) => {
+    setSmartBlocksLoading(true);
+    setSmartBlocksError('');
+    const blockScope = scope === 'week' ? 'week' : 'today';
+    const goalText = String(goal || '').trim();
+    axios
+      .get(
+        `/api/ai/smart-blocks?weekOffset=${offset}&scope=${encodeURIComponent(blockScope)}&goal=${encodeURIComponent(
+          goalText
+        )}`
+      )
+      .then((res) => {
+        const payload = res.data || {};
+        setSmartBlocks(Array.isArray(payload.smartBlocks) ? payload.smartBlocks : []);
+        setSmartBlocksSummary(String(payload.summary || '').trim());
+        setSmartBlocksEmptyWeek(Boolean(payload.emptyWeek));
+        if (rememberGoal) {
+          setSmartBlockAppliedGoal(goalText);
+        } else {
+          setSmartBlockAppliedGoal(String(payload.goalHint || '').trim());
+        }
+      })
+      .catch((err) => {
+        const details =
+          err?.response?.data?.details ||
+          err?.response?.data?.error ||
+          err?.message ||
+          'Failed to load smart block suggestions.';
+        setSmartBlocks([]);
+        setSmartBlocksSummary('');
+        setSmartBlocksEmptyWeek(false);
+        setSmartBlocksError(details);
+      })
+      .finally(() => setSmartBlocksLoading(false));
+  }, []);
+
   useEffect(() => {
     fetchWeek(weekOffset);
     fetchTopTasks(weekOffset, topTasksScope);
-  }, [weekOffset, topTasksScope, fetchWeek, fetchTopTasks]);
+    fetchSmartBlocks(weekOffset, topTasksScope, '', false);
+  }, [weekOffset, topTasksScope, fetchWeek, fetchTopTasks, fetchSmartBlocks]);
 
   const handleChatSend = async () => {
     const msg = chatInput.trim();
@@ -255,6 +307,7 @@ export default function HomePage() {
       });
       fetchWeek(weekOffset);
       fetchTopTasks(weekOffset, topTasksScope);
+      fetchSmartBlocks(weekOffset, topTasksScope, smartBlockAppliedGoal, false);
       const when = fmtDateTimeRange(suggested.start, suggested.end);
       setChatMessages((prev) => [
         ...prev,
@@ -279,6 +332,7 @@ export default function HomePage() {
         await axios.delete(`/api/events/${encodeURIComponent(change.eventId)}`);
         fetchWeek(weekOffset);
         fetchTopTasks(weekOffset, topTasksScope);
+        fetchSmartBlocks(weekOffset, topTasksScope, smartBlockAppliedGoal, false);
         setChatMessages((prev) => [
           ...prev,
           { role: 'ai', text: `Deleted event ${change.title || `"${change.eventId}"`}.` },
@@ -303,6 +357,7 @@ export default function HomePage() {
         await axios.put(`/api/events/${encodeURIComponent(change.eventId)}`, payload);
         fetchWeek(weekOffset);
         fetchTopTasks(weekOffset, topTasksScope);
+        fetchSmartBlocks(weekOffset, topTasksScope, smartBlockAppliedGoal, false);
         setChatMessages((prev) => [
           ...prev,
           { role: 'ai', text: `Updated event ${change.title || `"${change.eventId}"`}.` },
@@ -320,6 +375,50 @@ export default function HomePage() {
       ]);
     } finally {
       setApplyingChangeKey('');
+    }
+  };
+
+  const handleGenerateSmartBlocks = () => {
+    fetchSmartBlocks(weekOffset, topTasksScope, smartBlockGoalInput, true);
+  };
+
+  const handleClearSmartBlocks = () => {
+    setSmartBlocks([]);
+    setSmartBlocksSummary('');
+    setSmartBlocksError('');
+    setSmartBlocksEmptyWeek(false);
+  };
+
+  const handleDismissSmartBlock = (index) => {
+    setSmartBlocks((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleApplySmartBlock = async (block, index) => {
+    const key = `${block?.title || ''}|${block?.start || ''}|${block?.end || ''}`;
+    if (!block?.start || !block?.end || !block?.title || applyingSmartBlockKey === key) return;
+    setApplyingSmartBlockKey(key);
+    try {
+      const description = [block?.description, block?.reason].filter(Boolean).join('\n');
+      await axios.post('/api/events', {
+        summary: block.title,
+        start: block.start,
+        end: block.end,
+        description,
+        location: block.location || '',
+      });
+      setSmartBlocks((prev) => prev.filter((_, idx) => idx !== index));
+      fetchWeek(weekOffset);
+      fetchTopTasks(weekOffset, topTasksScope);
+      fetchSmartBlocks(weekOffset, topTasksScope, smartBlockAppliedGoal, false);
+    } catch (err) {
+      const details =
+        err?.response?.data?.details ||
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unknown error';
+      setSmartBlocksError(`Failed to apply smart block. ${details}`);
+    } finally {
+      setApplyingSmartBlockKey('');
     }
   };
 
@@ -436,6 +535,85 @@ export default function HomePage() {
                 </div>
               </>
             )}
+
+            <div className="planner-smart-section">
+              <div className="planner-smart-section-head">
+                <div className="planner-smart-section-title">Smart Block Suggestions</div>
+                <div className="planner-smart-section-sub">
+                  Dotted blocks are optional AI suggestions. Apply only what you want.
+                </div>
+              </div>
+
+              <div className="planner-smart-controls">
+                <input
+                  className="planner-smart-input"
+                  type="text"
+                  placeholder='Goal hint (optional): "study time for quiz on 20th"'
+                  value={smartBlockGoalInput}
+                  onChange={(e) => setSmartBlockGoalInput(e.target.value)}
+                />
+                <div className="planner-smart-actions-row">
+                  <button className="planner-smart-btn" type="button" onClick={handleGenerateSmartBlocks}>
+                    Regenerate
+                  </button>
+                  <button
+                    className="planner-smart-btn planner-smart-btn-muted"
+                    type="button"
+                    onClick={handleClearSmartBlocks}
+                  >
+                    Clear
+                  </button>
+                </div>
+                {smartBlockAppliedGoal && (
+                  <div className="planner-smart-goal-chip">Goal: {smartBlockAppliedGoal}</div>
+                )}
+              </div>
+
+              {smartBlocksLoading ? (
+                <div className="planner-smart-empty">
+                  <div className="planner-spinner" />
+                  <span>Generating smart blocks...</span>
+                </div>
+              ) : smartBlocksError ? (
+                <div className="planner-smart-empty">{smartBlocksError}</div>
+              ) : smartBlocksEmptyWeek ? (
+                <div className="planner-smart-empty">No events scheduled this week for smart-block analysis.</div>
+              ) : smartBlocks.length === 0 ? (
+                <div className="planner-smart-empty">{smartBlocksSummary || 'No smart blocks suggested.'}</div>
+              ) : (
+                <div className="planner-smart-list">
+                  {smartBlocksSummary && <div className="planner-smart-summary">{smartBlocksSummary}</div>}
+                  {smartBlocks.map((block, blockIndex) => {
+                    const key = `${block?.title || 'block'}|${block?.start || ''}|${block?.end || ''}`;
+                    const applying = applyingSmartBlockKey === key;
+                    return (
+                      <div key={`${key}|${blockIndex}`} className="planner-smart-card">
+                        <div className="planner-smart-card-title">{block.title}</div>
+                        <div className="planner-smart-card-meta">{fmtDateTimeRange(block.start, block.end)}</div>
+                        {block.reason && <div className="planner-smart-card-reason">{block.reason}</div>}
+                        <div className="planner-smart-card-actions">
+                          <button
+                            className="planner-add-btn"
+                            type="button"
+                            disabled={applying}
+                            onClick={() => handleApplySmartBlock(block, blockIndex)}
+                          >
+                            {applying ? 'Applying...' : 'Apply block'}
+                          </button>
+                          <button
+                            className="planner-smart-dismiss-btn"
+                            type="button"
+                            onClick={() => handleDismissSmartBlock(blockIndex)}
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </aside>
 
@@ -521,6 +699,60 @@ export default function HomePage() {
                     ))}
                   </React.Fragment>
                 ))}
+
+                {smartBlocks.map((block, index) => {
+                  const position = getEventPosition({
+                    start: block?.start,
+                    end: block?.end,
+                    allDay: false,
+                  });
+                  if (!position) return null;
+
+                  const dateKey = String(block?.dateKey || isoToDateKey(block?.start));
+                  const dayIndex = days.findIndex((day) => day.dateKey === dateKey);
+                  if (dayIndex === -1) return null;
+
+                  const startDate = new Date(block.start);
+                  if (Number.isNaN(startDate.getTime())) return null;
+                  const startHour = startDate.getHours();
+                  const startMinutes = startDate.getMinutes();
+
+                  const tooltipEvent = {
+                    summary: `Suggested: ${block.title || 'Smart block'}`,
+                    start: block.start,
+                    end: block.end,
+                    description: [block.reason, block.description].filter(Boolean).join(' '),
+                    timezone: block.timezone || '',
+                    location: block.location || '',
+                    attachmentCount: 0,
+                    attachments: [],
+                    conferenceLink: '',
+                    durationMinutes: Math.max(1, Math.round((new Date(block.end) - new Date(block.start)) / 60000)),
+                  };
+
+                  return (
+                    <div
+                      key={`smart-block-${index}-${dateKey}`}
+                      className="planner-smart-block-chip"
+                      style={{
+                        gridColumn: dayIndex + 2,
+                        gridRow: startHour + 2,
+                        marginTop: `${(startMinutes / 60) * HOUR_HEIGHT}px`,
+                        height: `${position.height}px`,
+                      }}
+                      onMouseEnter={(ev) => {
+                        const rect = ev.currentTarget.getBoundingClientRect();
+                        setTooltip({ event: tooltipEvent, x: rect.right + 8, y: rect.top });
+                      }}
+                      onMouseLeave={() => setTooltip(null)}
+                    >
+                      <div className="planner-event-chip-title">{block.title}</div>
+                      {position.height > 36 && (
+                        <div className="planner-event-chip-time">{fmtDateRange(block.start, block.end)}</div>
+                      )}
+                    </div>
+                  );
+                })}
 
                 {timedEvents.map((event) => {
                   const position = getEventPosition(event);
